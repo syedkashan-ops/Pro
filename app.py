@@ -20,7 +20,7 @@ def v83_review_backup_controls():
         )
         source_payload=st.session_state.get("payload")
         if source_payload:
-            bundle={"backup_version":"V8.8.1","review":review,"sanitized_payload":source_payload}
+            bundle={"backup_version":"V8.9","review":review,"sanitized_payload":source_payload}
             st.sidebar.download_button(
                 "Download Review + Source Bundle",
                 data=json.dumps(bundle,ensure_ascii=False,indent=2),
@@ -58,7 +58,7 @@ def v83_review_backup_controls():
     if st.session_state.pop("_v83_restore_notice",False):
         st.sidebar.success("Previous review restored. No Gemini call was made.")
 
-st.set_page_config(page_title="ProGen AI Review V8.8.1", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="ProGen AI Review V8.9", page_icon="🛡️", layout="wide")
 
 v83_review_backup_controls()
 
@@ -1179,7 +1179,7 @@ def build_v82_fallback_plan(r):
     return items
 
 
-# ---------------- V8.8.1 HARD APPROVAL GATE ----------------
+# ---------------- V8.9 HARD APPROVAL GATE ----------------
 V84_PROTECTED_TARGETS = {
     "P9_PEOPLE_INJURED", "P9_IS_HUMAN", "P9_IS_PROPERTY", "P9_IS_FIRE",
     "P9_IS_SPILL", "P9_IS_ROAD", "P9_RECORDABLE_INCIDENT", "P9_DAMAGE_TYPE",
@@ -1261,7 +1261,7 @@ def v84_apply_approval_gate(items):
             reasons.append("Status is VERIFY — investigator verification is required before any update.")
 
         # A named evidence source must actually appear in the retained source payload
-        # before V8.8.1 treats the label as source-grounded. If payload isn't retained,
+        # before V8.9 treats the label as source-grounded. If payload isn't retained,
         # do not falsely validate it.
         suspicious_source=False
         source_norm=_v84_norm(source)
@@ -1275,7 +1275,7 @@ def v84_apply_approval_gate(items):
                     reasons.append(f"Claimed source '{source}' was not found in the retained source payload.")
             elif "witness" in source_norm:
                 suspicious_source=True
-                reasons.append("Claimed Witness Statement is not independently validated by V8.8.1 source registry.")
+                reasons.append("Claimed Witness Statement is not independently validated by V8.9 source registry.")
 
         blocked=bool(reasons) or bool(item.get("guard_blocked",False))
         if item.get("guard_blocked") and item.get("guard_reason"):
@@ -1329,7 +1329,7 @@ def render_v84_source_data_issues(issues):
 
 
 
-# ---------------- V8.8.1 GROUNDED DRAFT RECONSTRUCTION ----------------
+# ---------------- V8.9 GROUNDED DRAFT RECONSTRUCTION ----------------
 def _v88_clause_split(text):
     out=[]
     for sent in _v87_claims(text):
@@ -1352,7 +1352,8 @@ def _v881_field(registry,field_id):
     src=registry.get(sid) or {}
     return str(src.get("text") or "").strip(), (sid if src else "")
 
-def _v881_source_first_finding(registry):
+def _v89_professional_finding(registry):
+    """Deterministic professional Finding Summary from grounded ProGen sources only."""
     if not registry: return "",[],[]
     src=registry.get("INCIDENT_HEADER") or {}
     data=src.get("data") or {}
@@ -1360,14 +1361,24 @@ def _v881_source_first_finding(registry):
     dt=_v881_lookup(data,"Incident Date","Incident Date & Time","Date")
     loc=_v881_lookup(data,"Incident Location","Location","Location Name")
     title=_v881_lookup(data,"Incident Title","Title")
-    lead=("Incident "+ref if ref else "The incident")
-    if dt: lead+=f" recorded on {dt}"
-    if loc: lead+=f" at {loc}"
-    lead+=(f' is recorded as "{title}".' if title else ".")
-    facts=[]; ids=[]
+
+    facts=[]; ids=[]; sentences=[]
+    lead=[]
+    if dt: lead.append(f"On {dt}")
+    if title:
+        lead.append(f'the incident "{title}" was recorded')
+    elif ref:
+        lead.append(f"incident {ref} was recorded")
+    else:
+        lead.append("the incident was recorded")
+    if loc: lead[-1] += f" at {loc}"
+    if ref and title: lead[-1] += f" under reference {ref}"
+    intro=" ".join(lead)+"."
+    sentences.append(intro)
     if src:
-        facts.append({"text":lead,"source_ids":["INCIDENT_HEADER"],"support_score":1.0}); ids.append("INCIDENT_HEADER")
-    body=[]
+        ids.append("INCIDENT_HEADER")
+        facts.append({"text":intro,"source_ids":["INCIDENT_HEADER"],"support_score":1.0})
+
     for sid,r in registry.items():
         if r.get("kind")!="report_row" or "property damage" not in str(r.get("title","")).lower(): continue
         row=r.get("data")
@@ -1376,25 +1387,52 @@ def _v881_source_first_finding(registry):
         detail=_v881_lookup(row,"Damage Details","Details","Description")
         extent=_v881_lookup(row,"Extent of Damage","Extent")
         cost=_v881_lookup(row,"Estimated Damage Cost","Estimated Cost","Cost")
-        bits=[]
-        if equip: bits.append(equip)
-        if detail: bits.append(detail)
-        if extent: bits.append("extent: "+extent)
-        if cost: bits.append("estimated damage cost: "+cost)
-        if bits:
-            t="Property Damage Report records "+"; ".join(bits)+"."
-            body.append(t); ids.append(sid); facts.append({"text":t,"source_ids":[sid],"support_score":1.0})
+        if not any([equip,detail,extent,cost]): continue
+
+        # Preserve source wording for the actual damage description; only the joining prose is templated.
+        if detail:
+            subject=detail.rstrip(" .")
+            t=subject + "."
+        elif equip:
+            t=f"Damage was recorded to {equip}."
+        else:
+            t="Property damage was recorded."
+        additions=[]
+        if extent: additions.append(f"The recorded extent of damage was {extent}")
+        if cost: additions.append(f"the estimated damage cost was {cost}")
+        if additions:
+            t += " " + additions[0]
+            if len(additions)>1: t += ", and " + additions[1]
+            t += "."
+        sentences.append(t)
+        ids.append(sid)
+        facts.append({"text":t,"source_ids":[sid],"support_score":1.0})
+
     suspended,s1=_v881_field(registry,"P9_OPERATIONS_SUSPENDED_DAMAGE")
     downtime,s2=_v881_field(registry,"P9_DOWNTIME_HOURS_1")
-    op=[]; opids=[]
-    if suspended: op.append("operations suspended: "+suspended); opids.append(s1)
-    if downtime: op.append("recorded downtime: "+downtime+" hours"); opids.append(s2)
-    opt=""
-    if op:
-        opt="The source record states "+" and ".join(op)+"."
-        ids.extend(opids); facts.append({"text":opt,"source_ids":opids,"support_score":1.0})
-    text=" ".join([lead]+body+([opt] if opt else []))
-    return text.strip(),list(dict.fromkeys(ids)),facts
+    opids=[]; opt=""
+    sv=suspended.strip().lower()
+    if sv in {"yes","y","true","1"} and downtime:
+        opt=f"Operations were suspended, with a recorded downtime of {downtime} hours."
+        opids=[s1,s2]
+    elif sv in {"yes","y","true","1"}:
+        opt="Operations were suspended."
+        opids=[s1]
+    elif sv in {"no","n","false","0"} and downtime:
+        opt=f"Operations were recorded as not suspended; the recorded downtime field is {downtime} hours."
+        opids=[s1,s2]
+    elif downtime:
+        opt=f"The recorded downtime was {downtime} hours."
+        opids=[s2]
+    if opt:
+        sentences.append(opt); ids.extend(opids)
+        facts.append({"text":opt,"source_ids":opids,"support_score":1.0})
+
+    return " ".join(sentences).strip(),list(dict.fromkeys(x for x in ids if x)),facts
+
+# Backward-compatible alias used by the V8.9 flow.
+def _v881_source_first_finding(registry):
+    return _v89_professional_finding(registry)
 
 def v881_apply_source_first(items,registry):
     out=[]
@@ -1409,7 +1447,7 @@ def v881_apply_source_first(items,registry):
                     "guard_blocked":False,"guard_reason":"","v88_reconstructed":True,"v881_source_first":True,
                     "v88_kept_claims":facts,"v88_removed_claims":[{"text":old,"source_ids":[],"support_score":0.0,
                     "reason":"Original AI narrative replaced by deterministic source-first reconstruction."}],
-                    "plan_origin":"V881_SOURCE_FIRST_RECONSTRUCTION"})
+                    "plan_origin":"V89_GROUNDED_PROFESSIONAL_DRAFT"})
         out.append(item)
     return out
 
@@ -1433,7 +1471,7 @@ def v88_reconstruct_candidates(items,registry):
         verify=str(item.get("status","")).upper()=="VERIFY"
         reason=str(item.get("guard_reason","") or "")
         # Only undo a grounding-only block; never override another guard.
-        other_guard=bool(reason and "V8.7" not in reason and "V8.8.1" not in reason)
+        other_guard=bool(reason and "V8.7" not in reason and "V8.9" not in reason)
 
         if registry and kept and not protected and not verify and not other_guard:
             pieces=[]
@@ -1458,10 +1496,10 @@ def v88_reconstruct_candidates(items,registry):
 def render_v88_reconstruction(item):
     if not item.get("v88_reconstructed"): return
     if item.get("v881_source_first"):
-        st.success("V8.8.1 rebuilt this Finding Summary directly from ProGen source data. Gemini narrative was not reused.")
+        st.success("V8.9 built this professional Finding Summary deterministically from grounded ProGen source data. Gemini narrative was not reused.")
     else:
-        st.success("V8.8.1 reconstructed this draft using only source-grounded claims.")
-    with st.expander("V8.8.1 Grounded Reconstruction Details",expanded=False):
+        st.success("V8.9 reconstructed this draft using only source-grounded claims.")
+    with st.expander("V8.9 Grounded Professional Draft Details",expanded=False):
         kept=item.get("v88_kept_claims") or []
         removed=item.get("v88_removed_claims") or []
         if kept:
@@ -1475,7 +1513,7 @@ def render_v88_reconstruction(item):
                 st.markdown("⛔ "+x["text"])
                 st.caption("Best source IDs: "+(", ".join(x["source_ids"]) or "NONE")+f" | support {x['support_score']:.2f}")
 
-# ---------------- V8.8.1 SOURCE REGISTRY + CLAIM GROUNDING ----------------
+# ---------------- V8.9 SOURCE REGISTRY + CLAIM GROUNDING ----------------
 V87_STOP={"the","a","an","and","or","of","to","in","on","at","for","with","by","from","as","is","was","were","be","been","being","that","this","it","its","their","there","into","while","across","based","initial","resulting","remains"}
 
 def _v87_sid(x):
@@ -1569,24 +1607,24 @@ def v87_ground_candidates(items):
         item["v87_registry_available"]=bool(registry)
         if not registry:
             item["guard_blocked"]=True
-            item["guard_reason"]=(str(item.get("guard_reason","")).strip()+" V8.8.1 source payload is unavailable; grounding cannot be verified.").strip()
+            item["guard_reason"]=(str(item.get("guard_reason","")).strip()+" V8.9 source payload is unavailable; grounding cannot be verified.").strip()
         elif not claims or failures:
             item["guard_blocked"]=True
             detail="; ".join(failures[:3]) if failures else "No atomic claims could be grounded."
-            item["guard_reason"]=(str(item.get("guard_reason","")).strip()+" V8.8.1 grounding failed for: "+detail).strip()
+            item["guard_reason"]=(str(item.get("guard_reason","")).strip()+" V8.9 grounding failed for: "+detail).strip()
         grounded.append(item)
     return grounded,registry
 
 def render_v87_grounding(item):
     claims=item.get("claim_grounding") or []
     if not claims: return
-    with st.expander("V8.8.1 Evidence Grounding",expanded=False):
+    with st.expander("V8.9 Evidence Grounding",expanded=False):
         for c in claims:
             mark="✅" if c.get("grounded") else "⛔"
             st.markdown(f"{mark} **{c.get('claim','')}**")
             st.caption("Source IDs: "+(", ".join(c.get("source_ids") or []) or "NONE")+f" | support {c.get('support_score',0):.2f}")
 
-# ---------------- V8.8.1 SCHEMA-AWARE CANDIDATE BUILDER ----------------
+# ---------------- V8.9 SCHEMA-AWARE CANDIDATE BUILDER ----------------
 V86_BAD_SCALARS={"","0","1","true","false","yes","no","none","null","n/a","na","-"}
 V86_KEYS=("text","narrative","description","finding","finding_text","finding_summary","statement","summary",
           "event","event_description","cause","cause_text","reason","action","recommendation","lesson",
@@ -1681,7 +1719,7 @@ def build_v86_structured_candidates(r):
     _v86_add(items,"Executive Summary","P9_EXECUTIVE_SUMMARY",ex,_v86_pick(ex,("text","executive_summary","summary","narrative")) if isinstance(ex,dict) else ex)
     return items
 
-# ---------------- V8.8.1 MERGE + DEDUPLICATION ----------------
+# ---------------- V8.9 MERGE + DEDUPLICATION ----------------
 def _v85_fingerprint(item):
     section=_v84_norm(item.get("section"))
     target=_v84_norm(item.get("target"))
@@ -1740,7 +1778,7 @@ def render_v8_workspace(review):
     st.info("Edit each proposed value and approve or reject it. V8 does not write, save, submit, accept, reject, or move the incident in ProGen.")
     items, gemini_count, deterministic_count = v85_merge_draft_candidates(review)
     if not st.session_state.get("payload"):
-        st.warning("V8.8.1 needs the sanitized ProGen source payload to verify evidence grounding. Restoring an old review-only backup is not enough. Paste/upload the original ProGen JSON and click Prepare & Validate; no Gemini call is required.")
+        st.warning("V8.9 needs the sanitized ProGen source payload to verify evidence grounding. Restoring an old review-only backup is not enough. Paste/upload the original ProGen JSON and click Prepare & Validate; no Gemini call is required.")
     st.caption(
         f"Draft sources merged: Gemini write plan ({gemini_count}) + "
         f"structured AI review candidates ({deterministic_count})"
@@ -1761,7 +1799,7 @@ def render_v8_workspace(review):
     if eligible_items:
         st.subheader("Investigation Drafts — Edit & Approve")
         st.caption(
-            "Only candidates that passed the V8.8.1 protection and VERIFY gate are shown below."
+            "Only candidates that passed the V8.9 protection and VERIFY gate are shown below."
         )
     else:
         st.info(
@@ -1897,7 +1935,7 @@ def show_review(r):
         show_evidence_guard(r)
 
     with tabs[8]:
-        st.warning("V8.8.1 never writes or submits to ProGen. Final Save/Submit remains manual.")
+        st.warning("V8.9 never writes or submits to ProGen. Final Save/Submit remains manual.")
         guard = r.get("evidence_guard") or {}
         if guard.get("approval_gate") == "REVIEW REQUIRED":
             st.error("Evidence Guard requires review. Guard-blocked write-plan items must not be approved until verified.")
@@ -1922,7 +1960,7 @@ def show_review(r):
     with tabs[9]:
         st.json(r, expanded=False)
 
-st.title("🛡️ ProGen AI Incident Review — V8.8.1")
+st.title("🛡️ ProGen AI Incident Review — V8.9")
 st.caption("Read → sanitize → Gemini review → human approval. Nothing is written to ProGen.")
 
 with st.sidebar:
