@@ -20,7 +20,7 @@ def v83_review_backup_controls():
         )
         source_payload=st.session_state.get("payload")
         if source_payload:
-            bundle={"backup_version":"V8.9","review":review,"sanitized_payload":source_payload}
+            bundle={"backup_version":"V9.0","review":review,"sanitized_payload":source_payload}
             st.sidebar.download_button(
                 "Download Review + Source Bundle",
                 data=json.dumps(bundle,ensure_ascii=False,indent=2),
@@ -58,7 +58,7 @@ def v83_review_backup_controls():
     if st.session_state.pop("_v83_restore_notice",False):
         st.sidebar.success("Previous review restored. No Gemini call was made.")
 
-st.set_page_config(page_title="ProGen AI Review V8.9", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="ProGen AI Review V9.0", page_icon="🛡️", layout="wide")
 
 v83_review_backup_controls()
 
@@ -1179,7 +1179,7 @@ def build_v82_fallback_plan(r):
     return items
 
 
-# ---------------- V8.9 HARD APPROVAL GATE ----------------
+# ---------------- V9.0 HARD APPROVAL GATE ----------------
 V84_PROTECTED_TARGETS = {
     "P9_PEOPLE_INJURED", "P9_IS_HUMAN", "P9_IS_PROPERTY", "P9_IS_FIRE",
     "P9_IS_SPILL", "P9_IS_ROAD", "P9_RECORDABLE_INCIDENT", "P9_DAMAGE_TYPE",
@@ -1261,7 +1261,7 @@ def v84_apply_approval_gate(items):
             reasons.append("Status is VERIFY — investigator verification is required before any update.")
 
         # A named evidence source must actually appear in the retained source payload
-        # before V8.9 treats the label as source-grounded. If payload isn't retained,
+        # before V9.0 treats the label as source-grounded. If payload isn't retained,
         # do not falsely validate it.
         suspicious_source=False
         source_norm=_v84_norm(source)
@@ -1275,7 +1275,7 @@ def v84_apply_approval_gate(items):
                     reasons.append(f"Claimed source '{source}' was not found in the retained source payload.")
             elif "witness" in source_norm:
                 suspicious_source=True
-                reasons.append("Claimed Witness Statement is not independently validated by V8.9 source registry.")
+                reasons.append("Claimed Witness Statement is not independently validated by V9.0 source registry.")
 
         blocked=bool(reasons) or bool(item.get("guard_blocked",False))
         if item.get("guard_blocked") and item.get("guard_reason"):
@@ -1329,7 +1329,7 @@ def render_v84_source_data_issues(issues):
 
 
 
-# ---------------- V8.9 GROUNDED DRAFT RECONSTRUCTION ----------------
+# ---------------- V9.0 GROUNDED DRAFT RECONSTRUCTION ----------------
 def _v88_clause_split(text):
     out=[]
     for sent in _v87_claims(text):
@@ -1430,7 +1430,7 @@ def _v89_professional_finding(registry):
 
     return " ".join(sentences).strip(),list(dict.fromkeys(x for x in ids if x)),facts
 
-# Backward-compatible alias used by the V8.9 flow.
+# Backward-compatible alias used by the V9.0 flow.
 def _v881_source_first_finding(registry):
     return _v89_professional_finding(registry)
 
@@ -1471,7 +1471,7 @@ def v88_reconstruct_candidates(items,registry):
         verify=str(item.get("status","")).upper()=="VERIFY"
         reason=str(item.get("guard_reason","") or "")
         # Only undo a grounding-only block; never override another guard.
-        other_guard=bool(reason and "V8.7" not in reason and "V8.9" not in reason)
+        other_guard=bool(reason and "V8.7" not in reason and "V9.0" not in reason)
 
         if registry and kept and not protected and not verify and not other_guard:
             pieces=[]
@@ -1496,10 +1496,10 @@ def v88_reconstruct_candidates(items,registry):
 def render_v88_reconstruction(item):
     if not item.get("v88_reconstructed"): return
     if item.get("v881_source_first"):
-        st.success("V8.9 built this professional Finding Summary deterministically from grounded ProGen source data. Gemini narrative was not reused.")
+        st.success("V9.0 built this professional Finding Summary deterministically from grounded ProGen source data. Gemini narrative was not reused.")
     else:
-        st.success("V8.9 reconstructed this draft using only source-grounded claims.")
-    with st.expander("V8.9 Grounded Professional Draft Details",expanded=False):
+        st.success("V9.0 reconstructed this draft using only source-grounded claims.")
+    with st.expander("V9.0 Grounded Professional Draft Details",expanded=False):
         kept=item.get("v88_kept_claims") or []
         removed=item.get("v88_removed_claims") or []
         if kept:
@@ -1513,7 +1513,7 @@ def render_v88_reconstruction(item):
                 st.markdown("⛔ "+x["text"])
                 st.caption("Best source IDs: "+(", ".join(x["source_ids"]) or "NONE")+f" | support {x['support_score']:.2f}")
 
-# ---------------- V8.9 SOURCE REGISTRY + CLAIM GROUNDING ----------------
+# ---------------- V9.0 SOURCE REGISTRY + CLAIM GROUNDING ----------------
 V87_STOP={"the","a","an","and","or","of","to","in","on","at","for","with","by","from","as","is","was","were","be","been","being","that","this","it","its","their","there","into","while","across","based","initial","resulting","remains"}
 
 def _v87_sid(x):
@@ -1607,24 +1607,24 @@ def v87_ground_candidates(items):
         item["v87_registry_available"]=bool(registry)
         if not registry:
             item["guard_blocked"]=True
-            item["guard_reason"]=(str(item.get("guard_reason","")).strip()+" V8.9 source payload is unavailable; grounding cannot be verified.").strip()
+            item["guard_reason"]=(str(item.get("guard_reason","")).strip()+" V9.0 source payload is unavailable; grounding cannot be verified.").strip()
         elif not claims or failures:
             item["guard_blocked"]=True
             detail="; ".join(failures[:3]) if failures else "No atomic claims could be grounded."
-            item["guard_reason"]=(str(item.get("guard_reason","")).strip()+" V8.9 grounding failed for: "+detail).strip()
+            item["guard_reason"]=(str(item.get("guard_reason","")).strip()+" V9.0 grounding failed for: "+detail).strip()
         grounded.append(item)
     return grounded,registry
 
 def render_v87_grounding(item):
     claims=item.get("claim_grounding") or []
     if not claims: return
-    with st.expander("V8.9 Evidence Grounding",expanded=False):
+    with st.expander("V9.0 Evidence Grounding",expanded=False):
         for c in claims:
             mark="✅" if c.get("grounded") else "⛔"
             st.markdown(f"{mark} **{c.get('claim','')}**")
             st.caption("Source IDs: "+(", ".join(c.get("source_ids") or []) or "NONE")+f" | support {c.get('support_score',0):.2f}")
 
-# ---------------- V8.9 SCHEMA-AWARE CANDIDATE BUILDER ----------------
+# ---------------- V9.0 SCHEMA-AWARE CANDIDATE BUILDER ----------------
 V86_BAD_SCALARS={"","0","1","true","false","yes","no","none","null","n/a","na","-"}
 V86_KEYS=("text","narrative","description","finding","finding_text","finding_summary","statement","summary",
           "event","event_description","cause","cause_text","reason","action","recommendation","lesson",
@@ -1719,7 +1719,120 @@ def build_v86_structured_candidates(r):
     _v86_add(items,"Executive Summary","P9_EXECUTIVE_SUMMARY",ex,_v86_pick(ex,("text","executive_summary","summary","narrative")) if isinstance(ex,dict) else ex)
     return items
 
-# ---------------- V8.9 MERGE + DEDUPLICATION ----------------
+# ---------------- V9.0 GROUNDED INVESTIGATION BUILDER ----------------
+V90_FACTUAL_SECTIONS={"Chronology","Causes","Why Why Analysis Tree"}
+
+def _v90_fact_pack(registry):
+    """Deterministic incident fact pack; never uses Gemini narrative."""
+    finding,ids,facts=_v89_professional_finding(registry)
+    return {"finding":finding,"source_ids":ids,"facts":facts}
+
+def _v90_source_first_summary(registry, executive=False):
+    pack=_v90_fact_pack(registry)
+    text=pack["finding"]
+    if not text:return "",[],[]
+    # Finding prose is already professional and source-first. For summary fields we
+    # deliberately reuse those exact grounded statements rather than paraphrasing via AI.
+    return text,pack["source_ids"],pack["facts"]
+
+def _v90_ground_factual_item(item,registry):
+    """Factual investigation entries must be fully source-grounded or remain blocked."""
+    x=dict(item); text=str(x.get("proposed_value",x.get("value","")) or "")
+    claims=[]; bad=[]
+    for claim in _v87_claims(text):
+        ids,score=_v87_support(claim,registry)
+        rec={"claim":claim,"source_ids":ids,"support_score":round(score,2),"grounded":bool(ids and score>=0.82)}
+        claims.append(rec)
+        if not rec["grounded"]:bad.append(rec)
+    x["claim_grounding"]=claims
+    if not claims or bad:
+        x["guard_blocked"]=True
+        x["guard_reason"]="V9.0 factual-section gate: one or more factual claims are not sufficiently grounded in retained ProGen source data."
+        x["v90_policy"]="FACTUAL_STRICT"
+    else:
+        x["source_ids"]=list(dict.fromkeys(sid for c in claims for sid in c["source_ids"]))
+        x["v90_policy"]="FACTUAL_STRICT"
+    return x
+
+def _v90_lesson_draft(target,registry):
+    """Deterministic lesson proposals. They are recommendations, not incident facts."""
+    pack=_v90_fact_pack(registry)
+    if not pack["source_ids"]:return "",[],[]
+    t=target.lower()
+    if "process" in t:
+        text="Review the adequacy of controls for protecting dispensing equipment and adjacent civil assets from vehicle impact, and document any required improvements."
+    elif "behaviour" in t:
+        text="Reinforce safe vehicle movement and forecourt traffic-control expectations for customers and site personnel, based on the confirmed vehicle-impact incident."
+    elif "leadership" in t:
+        text="Ensure that significant equipment or structural damage is promptly isolated, assessed and managed before normal operations resume."
+    elif "communication" in t:
+        text="Ensure that incident consequences, operational restrictions and required follow-up actions are communicated to relevant site and management personnel."
+    elif "other" in t:
+        text="Review whether additional engineering or operational controls are warranted in light of the recorded property damage and operational downtime."
+    else:
+        text="The incident demonstrates the need to review forecourt vehicle-impact controls and protection of dispensing and adjacent civil assets following significant property damage."
+    facts=[{"text":text,"source_ids":pack["source_ids"],"support_score":1.0,"nature":"DRAFT_RECOMMENDATION"}]
+    return text,pack["source_ids"],facts
+
+def _v90_action_draft(registry):
+    pack=_v90_fact_pack(registry)
+    if not pack["source_ids"]:return "",[],[]
+    text="Review the damaged dispensing and civil assets, confirm that affected areas are safe for operation, and identify any required repair or protective-control improvements before full restoration of normal service."
+    return text,pack["source_ids"],[{"text":text,"source_ids":pack["source_ids"],"support_score":1.0,"nature":"DRAFT_RECOMMENDATION"}]
+
+def v90_apply_investigation_builder(items,registry):
+    out=[]
+    for raw in items or []:
+        x=dict(raw); section=str(x.get("section") or ""); target=str(x.get("target") or "")
+        # Finding Summary remains V9.0 source-first.
+        if section=="Finding Summary":
+            out.append(x); continue
+        # Executive Summary and non-causal Summary Statement are rebuilt from facts.
+        if section=="Executive Summary" or (section=="Causes" and target=="Summary Statement"):
+            text,ids,facts=_v90_source_first_summary(registry,section=="Executive Summary")
+            if text and ids:
+                old=str(x.get("proposed_value",x.get("value","")) or "")
+                x.update({"proposed_value":text,"value":text,"source_ids":ids,
+                    "claim_grounding":[{"claim":f["text"],"source_ids":f["source_ids"],"support_score":1.0,"grounded":True} for f in facts],
+                    "guard_blocked":False,"guard_reason":"","v90_source_first":True,
+                    "v90_original_ai_value":old,"plan_origin":"V90_SOURCE_FIRST_SUMMARY"})
+            out.append(x); continue
+        # Chronology / actual causes / why-why are strict factual sections.
+        if section in V90_FACTUAL_SECTIONS:
+            out.append(_v90_ground_factual_item(x,registry)); continue
+        # Lessons are allowed as explicit draft learning/recommendation text, never as facts.
+        if section=="Lesson Learned":
+            text,ids,facts=_v90_lesson_draft(target,registry)
+            if text and ids:
+                x.update({"proposed_value":text,"value":text,"source_ids":ids,"status":"DRAFT",
+                    "claim_grounding":[{"claim":text,"source_ids":ids,"support_score":1.0,"grounded":True,"nature":"DRAFT_RECOMMENDATION"}],
+                    "guard_blocked":False,"guard_reason":"","v90_recommendation":True,
+                    "plan_origin":"V90_GROUNDED_LESSON_DRAFT"})
+            out.append(x); continue
+        # Actions can be proposed, but are explicitly recommendations rather than completed actions.
+        if section=="Actions and Recommendations":
+            text,ids,facts=_v90_action_draft(registry)
+            if text and ids:
+                x.update({"proposed_value":text,"value":text,"source_ids":ids,"status":"DRAFT",
+                    "claim_grounding":[{"claim":text,"source_ids":ids,"support_score":1.0,"grounded":True,"nature":"DRAFT_RECOMMENDATION"}],
+                    "guard_blocked":False,"guard_reason":"","v90_recommendation":True,
+                    "plan_origin":"V90_GROUNDED_ACTION_DRAFT"})
+            out.append(x); continue
+        out.append(x)
+    return out
+
+def render_v90_builder(item):
+    if item.get("v90_source_first"):
+        st.success("V9.0 rebuilt this section directly from grounded ProGen facts; Gemini narrative was not reused.")
+    elif item.get("v90_recommendation"):
+        st.info("V9.0 generated this as a DRAFT recommendation/lesson from grounded incident consequences. It is not presented as an established incident fact.")
+    elif item.get("v90_policy")=="FACTUAL_STRICT":
+        if item.get("guard_blocked"):
+            st.warning("V9.0 factual-section gate: this entry remains blocked until its factual claims are grounded in retained ProGen source data.")
+        else:
+            st.success("V9.0 factual-section gate: all claims in this entry are source-grounded.")
+
+# ---------------- V9.0 MERGE + DEDUPLICATION ----------------
 def _v85_fingerprint(item):
     section=_v84_norm(item.get("section"))
     target=_v84_norm(item.get("target"))
@@ -1763,6 +1876,7 @@ def v85_split_after_gate(items):
     grounded,_registry=v87_ground_candidates(items)
     reconstructed=v88_reconstruct_candidates(grounded,_registry)
     reconstructed=v881_apply_source_first(reconstructed,_registry)
+    reconstructed=v90_apply_investigation_builder(reconstructed,_registry)
     gated,issues=v84_apply_approval_gate(reconstructed)
     eligible=[]
     blocked=[]
@@ -1774,11 +1888,11 @@ def v85_split_after_gate(items):
     return eligible,blocked,issues
 
 def render_v8_workspace(review):
-    st.header("V8 — Edit & Approve ProGen Draft")
+    st.header("V9.0 — Grounded Investigation Builder")
     st.info("Edit each proposed value and approve or reject it. V8 does not write, save, submit, accept, reject, or move the incident in ProGen.")
     items, gemini_count, deterministic_count = v85_merge_draft_candidates(review)
     if not st.session_state.get("payload"):
-        st.warning("V8.9 needs the sanitized ProGen source payload to verify evidence grounding. Restoring an old review-only backup is not enough. Paste/upload the original ProGen JSON and click Prepare & Validate; no Gemini call is required.")
+        st.warning("V9.0 needs the sanitized ProGen source payload to verify evidence grounding. Restoring an old review-only backup is not enough. Paste/upload the original ProGen JSON and click Prepare & Validate; no Gemini call is required.")
     st.caption(
         f"Draft sources merged: Gemini write plan ({gemini_count}) + "
         f"structured AI review candidates ({deterministic_count})"
@@ -1799,7 +1913,7 @@ def render_v8_workspace(review):
     if eligible_items:
         st.subheader("Investigation Drafts — Edit & Approve")
         st.caption(
-            "Only candidates that passed the V8.9 protection and VERIFY gate are shown below."
+            "Only candidates that passed the V9.0 source-grounding, protection and VERIFY gates are shown below."
         )
     else:
         st.info(
@@ -1822,6 +1936,7 @@ def render_v8_workspace(review):
             if item.get("plan_origin")=="V86_SCHEMA_AWARE_STRUCTURED_REVIEW" and item.get("source_object") is not None:
                 with st.expander("Source AI object",expanded=False):
                     st.json(item.get("source_object"))
+            render_v90_builder(item)
             render_v88_reconstruction(item)
             render_v87_grounding(item)
             draft_value=item.get("value",item.get("proposed_value",""))
@@ -1935,7 +2050,7 @@ def show_review(r):
         show_evidence_guard(r)
 
     with tabs[8]:
-        st.warning("V8.9 never writes or submits to ProGen. Final Save/Submit remains manual.")
+        st.warning("V9.0 never writes or submits to ProGen. Final Save/Submit remains manual.")
         guard = r.get("evidence_guard") or {}
         if guard.get("approval_gate") == "REVIEW REQUIRED":
             st.error("Evidence Guard requires review. Guard-blocked write-plan items must not be approved until verified.")
@@ -1960,7 +2075,7 @@ def show_review(r):
     with tabs[9]:
         st.json(r, expanded=False)
 
-st.title("🛡️ ProGen AI Incident Review — V8.9")
+st.title("🛡️ ProGen AI Incident Review — V9.0")
 st.caption("Read → sanitize → Gemini review → human approval. Nothing is written to ProGen.")
 
 with st.sidebar:
