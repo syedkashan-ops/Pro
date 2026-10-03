@@ -5,6 +5,7 @@ import time
 import random
 import streamlit as st
 from google import genai
+from json_repair import repair_json
 
 
 def v83_review_backup_controls():
@@ -20,7 +21,7 @@ def v83_review_backup_controls():
         )
         source_payload=st.session_state.get("payload")
         if source_payload:
-            bundle={"backup_version":"V9.4","review":review,"sanitized_payload":source_payload,"investigator_verified_evidence":st.session_state.get("v93_verified_evidence",[])}
+            bundle={"backup_version":"V9.4.1","review":review,"sanitized_payload":source_payload,"investigator_verified_evidence":st.session_state.get("v93_verified_evidence",[])}
             st.sidebar.download_button(
                 "Download Review + Source Bundle",
                 data=json.dumps(bundle,ensure_ascii=False,indent=2),
@@ -321,43 +322,77 @@ TECH_FIELDS = {"P9_DAMAGE_ID", "P9_DETAILS_ID", "P9_DETAILS_COUNT", "P9_READ_ONL
 TEST_REPORT_PREFIXES = ("ChronologyAdd Event", "Primary Causes", "Immediate Cause", "Root Cause", "Action CAPA")
 
 def parse_json_loose(text):
+    """Parse Gemini JSON defensively without making another model call.
+
+    V9.4.1 order: strict JSON -> balanced object -> deterministic json-repair.
+    The repaired result must still be a JSON object; schema validation runs next.
+    """
     if not text or not text.strip():
         raise ValueError("Empty JSON/AI response.")
+
+    original = text
     text = text.strip()
     text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I)
     text = re.sub(r"\s*```$", "", text)
+
+    # 1) Strict parse first.
     try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
+        parsed = json.loads(text)
+        if not isinstance(parsed, dict):
+            raise ValueError("Gemini response JSON must be an object.")
+        st.session_state["json_parse_mode"] = "STRICT"
+        return parsed
+    except json.JSONDecodeError as strict_exc:
+        strict_error = strict_exc
 
+    # 2) If Gemini wrapped the object in prose, try the first balanced object.
     start = text.find("{")
-    if start < 0:
-        raise ValueError("No JSON object found in Gemini response.")
+    if start >= 0:
+        depth = 0
+        in_string = False
+        escape = False
+        for i in range(start, len(text)):
+            c = text[i]
+            if in_string:
+                if escape:
+                    escape = False
+                elif c == "\\":
+                    escape = True
+                elif c == '"':
+                    in_string = False
+                continue
+            if c == '"':
+                in_string = True
+            elif c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    candidate = text[start:i + 1]
+                    try:
+                        parsed = json.loads(candidate)
+                        if not isinstance(parsed, dict):
+                            raise ValueError("Gemini response JSON must be an object.")
+                        st.session_state["json_parse_mode"] = "BALANCED_OBJECT"
+                        return parsed
+                    except json.JSONDecodeError:
+                        break
 
-    depth = 0
-    in_string = False
-    escape = False
-    for i in range(start, len(text)):
-        c = text[i]
-        if in_string:
-            if escape:
-                escape = False
-            elif c == "\\":
-                escape = True
-            elif c == '"':
-                in_string = False
-            continue
-        if c == '"':
-            in_string = True
-        elif c == "{":
-            depth += 1
-        elif c == "}":
-            depth -= 1
-            if depth == 0:
-                return json.loads(text[start:i + 1])
-
-    raise ValueError("Incomplete or invalid JSON returned by Gemini.")
+    # 3) One deterministic local repair pass on the response already received.
+    #    This does NOT call Gemini again and does NOT invent investigation facts.
+    try:
+        repaired = repair_json(text, return_objects=True, skip_json_loads=True)
+        if not isinstance(repaired, dict):
+            raise ValueError("Repaired Gemini response was not a JSON object.")
+        st.session_state["json_parse_mode"] = "LOCAL_JSON_REPAIR"
+        st.session_state["json_repair_used"] = True
+        return repaired
+    except Exception as repair_exc:
+        st.session_state["json_parse_mode"] = "FAILED"
+        raise ValueError(
+            "Gemini response was received but could not be parsed as JSON after one local repair pass. "
+            f"Original parse error: {strict_error}. Repair error: {repair_exc}"
+        ) from repair_exc
 
 def sanitize(src):
     data = copy.deepcopy(src)
@@ -673,16 +708,16 @@ def call_gemini(payload):
             st.session_state.api_diagnostic = {
                 "http_status": 200,
                 "machine_code": "success",
-                "category": "AI Review generated",
+                "category": "Gemini response received",
                 "retry_after_seconds": None,
-                "advice": f"Review generated using {model}.",
+                "advice": f"Gemini response received from {model}; JSON parsing/validation follows.",
                 "model_used": model,
                 "fallback_used": index > 1,
                 "model_attempts": index,
                 "failures": failures,
             }
             status_box.success(
-                f"AI Review generated using {model}"
+                f"Gemini response received from {model}"
                 + (" (fallback model)." if index > 1 else ".")
             )
             return text
@@ -2269,7 +2304,7 @@ def render_v92_investigation_development(registry):
     render_v93_verified_evidence()
 
 def render_v8_workspace(review):
-    st.header("V9.4 — Deep Evidence + Investigator Resolution Workspace")
+    st.header("V9.4.1 — Deep Evidence + Investigator Resolution Workspace")
     st.info("Resolve investigation gaps into explicitly investigator-verified evidence, then edit and approve only eligible drafts. V9.3 does not write, save, submit, accept, reject, or move the incident in ProGen.")
     items, gemini_count, deterministic_count = v85_merge_draft_candidates(review)
     if not st.session_state.get("payload"):
@@ -2487,7 +2522,7 @@ generate_btn = c2.button("2. Generate AI Review", type="primary", use_container_
 clear_btn = c3.button("Clear", use_container_width=True)
 
 if clear_btn:
-    for k in ["payload", "review", "raw_ai"]:
+    for k in ["payload", "review", "raw_ai", "json_parse_mode", "json_repair_used"]:
         st.session_state.pop(k, None)
     st.rerun()
 
@@ -2510,9 +2545,14 @@ if generate_btn:
         with st.spinner("Gemini is reviewing the incident..."):
             raw_ai = call_gemini(payload)
             st.session_state.raw_ai = raw_ai
+            st.session_state.pop("json_repair_used", None)
+            st.session_state.pop("json_parse_mode", None)
             parsed_review = validate_review(parse_json_loose(raw_ai))
             st.session_state.review = enforce_evidence_guard(parsed_review, payload)
-        st.success("AI Review generated. Nothing was written to ProGen.")
+        mode = st.session_state.get("json_parse_mode", "STRICT")
+        if mode == "LOCAL_JSON_REPAIR":
+            st.warning("Gemini response contained malformed JSON. V9.4.1 repaired it locally, then validated the review successfully. No second AI generation call was made.")
+        st.success("AI Review successfully parsed and validated. Nothing was written to ProGen.")
     except Exception as exc:
         st.error("AI Review failed: " + str(exc))
         if st.session_state.get("raw_ai"):
