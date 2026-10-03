@@ -21,7 +21,7 @@ def v83_review_backup_controls():
         )
         source_payload=st.session_state.get("payload")
         if source_payload:
-            bundle={"backup_version":"V9.4.1","review":review,"sanitized_payload":source_payload,"investigator_verified_evidence":st.session_state.get("v93_verified_evidence",[])}
+            bundle={"backup_version":"V9.4.2","review":review,"sanitized_payload":source_payload,"investigator_verified_evidence":st.session_state.get("v93_verified_evidence",[])}
             st.sidebar.download_button(
                 "Download Review + Source Bundle",
                 data=json.dumps(bundle,ensure_ascii=False,indent=2),
@@ -60,7 +60,7 @@ def v83_review_backup_controls():
     if st.session_state.pop("_v83_restore_notice",False):
         st.sidebar.success("Previous review restored. No Gemini call was made.")
 
-st.set_page_config(page_title="ProGen AI Review V9.4", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="ProGen AI Review V9.4.2", page_icon="🛡️", layout="wide")
 
 v83_review_backup_controls()
 
@@ -2154,7 +2154,7 @@ def _v94_injury_reconciliation(registry):
     expected=None
     for sid,src in (registry or {}).items():
         if sid=="FIELD_P9_PEOPLE_INJURED":
-            m=re.search(r"\\d+",str(src.get("text") or ""))
+            m=re.search(r"\d+",str(src.get("text") or ""))
             if m: expected=int(m.group(0))
     records=_v94_deep_injury_records(registry)
     captured=len(records)
@@ -2164,7 +2164,7 @@ def _v94_injury_reconciliation(registry):
 
 def render_v94_deep_evidence_status(registry):
     rec=_v94_injury_reconciliation(registry)
-    st.subheader("V9.4 Deep Evidence Extraction")
+    st.subheader("V9.4.2 Deep Evidence Extraction")
     c1,c2,c3=st.columns(3)
     c1.metric("People injured (source field)", rec["expected"] if rec["expected"] is not None else "—")
     c2.metric("Detailed injury records captured",rec["captured"])
@@ -2250,7 +2250,7 @@ def _v93_accept_resolution(dev_id,item,resolution,statement,evidence_ref):
 
 def render_v93_verified_evidence():
     store=_v93_verified_store()
-    st.subheader("V9.4 Investigator-Verified Evidence Registry")
+    st.subheader("V9.4.2 Investigator-Verified Evidence Registry")
     st.caption("Only information explicitly accepted by the investigator appears here. It is kept separate from original ProGen source data and may be used for downstream grounding.")
     if not store:
         st.info("No investigator-established evidence has been accepted yet.")
@@ -2269,7 +2269,7 @@ def render_v93_verified_evidence():
 
 def render_v92_investigation_development(registry):
     q=v92_investigation_development_queue(registry)
-    st.subheader("V9.4 Investigator Resolution Workspace")
+    st.subheader("V9.4.2 Investigator Resolution Workspace")
     st.caption("Resolve investigation gaps here. Confirmed/Corrected information is accepted only after you provide the established statement and its evidence/reference. Unable to Verify and Not Applicable close nothing and never become facts.")
     if not q:
         st.success("No unresolved development gaps were detected from the current source + investigator-verified evidence registry.")
@@ -2304,8 +2304,8 @@ def render_v92_investigation_development(registry):
     render_v93_verified_evidence()
 
 def render_v8_workspace(review):
-    st.header("V9.4.1 — Deep Evidence + Investigator Resolution Workspace")
-    st.info("Resolve investigation gaps into explicitly investigator-verified evidence, then edit and approve only eligible drafts. V9.3 does not write, save, submit, accept, reject, or move the incident in ProGen.")
+    st.header("V9.4.2 — Deep Evidence + Investigator Resolution Workspace")
+    st.info("Resolve investigation gaps into explicitly investigator-verified evidence, then edit and approve only eligible drafts. V9.4.2 does not write, save, submit, accept, reject, or move the incident in ProGen.")
     items, gemini_count, deterministic_count = v85_merge_draft_candidates(review)
     if not st.session_state.get("payload"):
         st.warning("V9.2 needs the sanitized ProGen source payload to verify evidence grounding. Restoring an old review-only backup is not enough. Paste/upload the original ProGen JSON and click Prepare & Validate; no Gemini call is required.")
