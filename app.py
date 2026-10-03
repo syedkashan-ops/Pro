@@ -20,7 +20,7 @@ def v83_review_backup_controls():
         )
         source_payload=st.session_state.get("payload")
         if source_payload:
-            bundle={"backup_version":"V9.2","review":review,"sanitized_payload":source_payload}
+            bundle={"backup_version":"V9.3","review":review,"sanitized_payload":source_payload,"investigator_verified_evidence":st.session_state.get("v93_verified_evidence",[])}
             st.sidebar.download_button(
                 "Download Review + Source Bundle",
                 data=json.dumps(bundle,ensure_ascii=False,indent=2),
@@ -44,6 +44,7 @@ def v83_review_backup_controls():
                 if isinstance(restored.get("review"),dict) and isinstance(restored.get("sanitized_payload"),dict):
                     st.session_state.review=restored["review"]
                     st.session_state.payload=restored["sanitized_payload"]
+                    st.session_state.v93_verified_evidence=restored.get("investigator_verified_evidence",[])
                 else:
                     known={"incident_identity","review_status","verified_facts","investigation",
                            "executive_summary","progen_write_plan","evidence_guard","classification_review"}
@@ -58,7 +59,7 @@ def v83_review_backup_controls():
     if st.session_state.pop("_v83_restore_notice",False):
         st.sidebar.success("Previous review restored. No Gemini call was made.")
 
-st.set_page_config(page_title="ProGen AI Review V9.2", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="ProGen AI Review V9.3", page_icon="🛡️", layout="wide")
 
 v83_review_backup_controls()
 
@@ -1590,7 +1591,7 @@ def v87_ground_candidates(items):
         if isinstance(val,dict) and (val.get("fields") or val.get("reports") or val.get("incident")):
             payload=val
             break
-    registry=build_v87_source_registry(payload)
+    registry=_v93_combined_registry(build_v87_source_registry(payload))
     grounded=[]
     for raw in items or []:
         item=dict(raw)
@@ -1754,6 +1755,11 @@ def _v92_field_value(registry, field_id):
     return v.strip(),sid
 
 def _v92_human_consequence(registry):
+    for sid,r in (registry or {}).items():
+        d=r.get("data") if isinstance(r,dict) else {}
+        if r.get("kind")=="investigator_verified" and _v93_section_key((d or {}).get("section"))==_v93_section_key("Consequence / Injury"):
+            text=str(r.get("text") or "").strip()
+            if text: return text,[sid],True
     human,hid=_v92_field_value(registry,"P9_IS_HUMAN")
     count,cid=_v92_field_value(registry,"P9_PEOPLE_INJURED")
     ids=[x for x in (hid,cid) if x]
@@ -1766,6 +1772,11 @@ def _v92_human_consequence(registry):
     return "",ids,False
 
 def _v92_root_cause(registry):
+    for sid,r in (registry or {}).items():
+        d=r.get("data") if isinstance(r,dict) else {}
+        if r.get("kind")=="investigator_verified" and _v93_section_key((d or {}).get("section"))==_v93_section_key("Causes / Why-Why"):
+            text=str(r.get("text") or "").strip()
+            if text:return text,[sid]
     rows=_v92_report_rows(registry,"root cause")
     if not rows:return "",[]
     vals=[]; ids=[]
@@ -1776,8 +1787,13 @@ def _v92_root_cause(registry):
     return ("; ".join(vals),ids) if vals else ("",[])
 
 def _v92_actions(registry):
-    rows=_v92_report_rows(registry,"action")
     vals=[]; ids=[]
+    for sid,r in (registry or {}).items():
+        d=r.get("data") if isinstance(r,dict) else {}
+        if r.get("kind")=="investigator_verified" and _v93_section_key((d or {}).get("section"))==_v93_section_key("Actions & Recommendations"):
+            text=str(r.get("text") or "").strip()
+            if text: vals.append(text); ids.append(sid)
+    rows=_v92_report_rows(registry,"action")
     for sid,row in rows:
         text=_v881_lookup(row,"Actions and Recommendations","Action","Corrective Action","Recommendation")
         status=_v881_lookup(row,"Status","CAPA Status")
@@ -1786,9 +1802,13 @@ def _v92_actions(registry):
     return vals,ids
 
 def _v92_response(registry):
-    # Only use explicit response/containment source fields/rows; never infer isolation,
-    # first aid, emergency response, notifications, etc. from the consequence itself.
+    # Only use explicit response/containment evidence; never infer actions from consequences.
     vals=[]; ids=[]
+    for sid,r in (registry or {}).items():
+        d=r.get("data") if isinstance(r,dict) else {}
+        if r.get("kind")=="investigator_verified" and _v93_section_key((d or {}).get("section"))==_v93_section_key("Immediate Response"):
+            text=str(r.get("text") or "").strip()
+            if text: vals.append(text); ids.append(sid)
     for sid,r in (registry or {}).items():
         blob=(str(r.get("title","")+" "+str(r.get("label",""))).lower())
         if any(k in blob for k in ("immediate response","containment","remedial action")):
@@ -1829,8 +1849,7 @@ def _v92_executive_summary(registry):
         paragraphs.append(t); ids.extend(aids); facts.append({"text":t,"source_ids":aids,"support_score":1.0})
     else: missing.append("Verified actions being taken are not established in retained source data.")
 
-    # A systemic implication must be an actual investigation finding, not an AI extrapolation.
-    missing.append("Systemic implication is not included unless explicitly established by the investigation.")
+    # Systemic implication is optional under the ProGen guideline and is included only when explicitly established.
     text="\n\n".join(p for p in paragraphs if p).strip()
     return text,list(dict.fromkeys(ids)),facts,missing
 
@@ -2028,53 +2047,155 @@ def v85_split_after_gate(items):
     return eligible,blocked,issues
 
 
+def _v93_verified_store():
+    """Investigator-established evidence is separate from original ProGen source data."""
+    if "v93_verified_evidence" not in st.session_state:
+        st.session_state.v93_verified_evidence=[]
+    return st.session_state.v93_verified_evidence
+
+
+def _v93_section_key(section):
+    return re.sub(r"[^A-Z0-9]+","_",str(section or "").upper()).strip("_")
+
+
+def _v93_evidence_for(section):
+    key=_v93_section_key(section)
+    return [x for x in _v93_verified_store() if x.get("section_key")==key and x.get("active",True)]
+
+
+def _v93_combined_registry(registry):
+    reg=dict(registry or {})
+    for x in _v93_verified_store():
+        if not x.get("active",True):
+            continue
+        sid=x.get("evidence_id")
+        statement=str(x.get("statement") or "").strip()
+        if sid and statement:
+            reg[sid]={
+                "kind":"investigator_verified",
+                "text":statement,
+                "data":x,
+                "title":"Investigator Verified Evidence",
+                "provenance":"INVESTIGATOR_VERIFIED"
+            }
+    return reg
+
+
 def v92_investigation_development_queue(registry):
-    """Build a non-factual investigator work queue. These are prompts/checks, never incident facts."""
+    """Build investigator work queue. V9.3 hides a gap after accepted investigator evidence resolves it."""
     q=[]
     human,hids,human_final=_v92_human_consequence(registry)
-    if human and not human_final:
+    if human and not human_final and not _v93_evidence_for("Consequence / Injury"):
         q.append({"section":"Consequence / Injury","state":"VERIFY","prompt":"Reconcile the recorded human-injury flag and number of people injured with the detailed Injury Report records. Confirm each affected person, injury description, treatment and final severity/classification.","source_ids":hids})
-    if not _v92_report_rows(registry,"chronology"):
-        q.append({"section":"Chronology","state":"DEVELOP","prompt":"Establish the event sequence from verified evidence. Record only time-stamped events supported by source material; keep unverified vehicle-mechanism statements as VERIFY rather than facts.","source_ids":[]})
-    else:
-        q.append({"section":"Chronology","state":"VERIFY","prompt":"Review chronology entries and separate observed/verified events from reported or assumed mechanism details before using them in findings or causes.","source_ids":[sid for sid,_ in _v92_report_rows(registry,"chronology")]})
-    if not _v92_root_cause(registry)[0]:
+    if not _v93_evidence_for("Chronology"):
+        if not _v92_report_rows(registry,"chronology"):
+            q.append({"section":"Chronology","state":"DEVELOP","prompt":"Establish the event sequence from verified evidence. Record only time-stamped events supported by source material; keep unverified vehicle-mechanism statements as VERIFY rather than facts.","source_ids":[]})
+        else:
+            q.append({"section":"Chronology","state":"VERIFY","prompt":"Review chronology entries and separate observed/verified events from reported or assumed mechanism details before using them in findings or causes.","source_ids":[sid for sid,_ in _v92_report_rows(registry,"chronology")]})
+    if not _v92_root_cause(registry)[0] and not _v93_evidence_for("Causes / Why-Why"):
         q.append({"section":"Causes / Why-Why","state":"DEVELOP","prompt":"Develop immediate and root causes only after the chronology and findings are verified. Use Why-Why to test causal links; do not convert tyre failure, speed, driver behaviour or similar hypotheses into facts without evidence.","source_ids":[]})
-    if not _v92_response(registry)[0]:
+    if not _v92_response(registry)[0] and not _v93_evidence_for("Immediate Response"):
         q.append({"section":"Immediate Response","state":"DEVELOP","prompt":"Confirm and document the actual immediate response and containment: what was made safe, by whom, when, and what operational restriction was applied. Do not infer actions from the damage outcome.","source_ids":[]})
-    if not _v92_actions(registry)[0]:
+    if not _v92_actions(registry)[0] and not _v93_evidence_for("Actions & Recommendations"):
         q.append({"section":"Actions & Recommendations","state":"DEVELOP","prompt":"After causes are established, define corrective/preventive actions linked to those causes, with responsibility and deadline supplied by the investigator. Keep proposed actions as DRAFT until approved.","source_ids":[]})
-    # Lessons are downstream of verified findings/causes.
-    lesson_ready=bool(_v92_root_cause(registry)[0])
-    if not lesson_ready:
+    lesson_ready=bool(_v92_root_cause(registry)[0] or _v93_evidence_for("Causes / Why-Why"))
+    if not lesson_ready and not _v93_evidence_for("Lesson Learned"):
         q.append({"section":"Lesson Learned","state":"INSUFFICIENT_EVIDENCE","prompt":"Do not finalize lesson categories yet. Reassess them after verified findings and causes are established; generate only categories actually demonstrated by the investigation.","source_ids":[]})
-    ex_text,ex_ids,_,missing=_v92_executive_summary(registry)
-    if missing:
+    ex_text,ex_ids,_,missing=_v92_executive_summary(_v93_combined_registry(registry))
+    if missing and not _v93_evidence_for("Executive Summary"):
         q.append({"section":"Executive Summary","state":"INCOMPLETE","prompt":"Finalize last, after the investigation establishes the missing management-summary elements: "+" ".join(missing),"source_ids":ex_ids})
     return q
 
+
+def _v93_accept_resolution(dev_id,item,resolution,statement,evidence_ref):
+    resolution=str(resolution or "").strip()
+    statement=str(statement or "").strip()
+    evidence_ref=str(evidence_ref or "").strip()
+    if resolution not in {"Confirmed","Corrected"}:
+        return False,"Only Confirmed or Corrected information can be accepted as investigation evidence."
+    if not statement:
+        return False,"Enter the investigator-established information before accepting it."
+    if not evidence_ref:
+        return False,"Enter the evidence/reference used to establish this information."
+    store=_v93_verified_store()
+    section_key=_v93_section_key(item.get("section"))
+    # Stable per development section; replace the prior accepted resolution for the same section.
+    evidence_id="INVESTIGATOR_VERIFIED_"+section_key
+    store[:]=[x for x in store if x.get("evidence_id")!=evidence_id]
+    store.append({
+        "evidence_id":evidence_id,
+        "development_id":dev_id,
+        "section":item.get("section"),
+        "section_key":section_key,
+        "resolution":resolution,
+        "statement":statement,
+        "evidence_reference":evidence_ref,
+        "original_source_ids":item.get("source_ids") or [],
+        "provenance":"INVESTIGATOR_VERIFIED",
+        "accepted_by_human":True,
+        "active":True
+    })
+    return True,evidence_id
+
+
+def render_v93_verified_evidence():
+    store=_v93_verified_store()
+    st.subheader("V9.3 Investigator-Verified Evidence Registry")
+    st.caption("Only information explicitly accepted by the investigator appears here. It is kept separate from original ProGen source data and may be used for downstream grounding.")
+    if not store:
+        st.info("No investigator-established evidence has been accepted yet.")
+        return
+    for x in list(store):
+        with st.expander(f'{x.get("evidence_id")} — {x.get("section")} — {x.get("resolution")}',expanded=False):
+            st.write(x.get("statement",""))
+            st.caption("Evidence/reference: "+str(x.get("evidence_reference") or ""))
+            if x.get("original_source_ids"):
+                st.caption("Original grounding references: "+", ".join(x.get("original_source_ids") or []))
+            if st.button("Revoke this accepted evidence",key="v93_revoke_"+x.get("evidence_id","")):
+                store.remove(x)
+                st.rerun()
+    st.download_button("Download Investigator-Verified Evidence (JSON)",json.dumps(store,ensure_ascii=False,indent=2),"progen_v93_investigator_verified_evidence.json","application/json",key="v93_evidence_download")
+
+
 def render_v92_investigation_development(registry):
     q=v92_investigation_development_queue(registry)
-    st.subheader("V9.2 Investigation Development")
-    st.caption("This queue helps develop the investigation. Items below are questions/checks for the investigator — not established incident facts and not ProGen write candidates.")
+    st.subheader("V9.3 Investigator Resolution Workspace")
+    st.caption("Resolve investigation gaps here. Confirmed/Corrected information is accepted only after you provide the established statement and its evidence/reference. Unable to Verify and Not Applicable close nothing and never become facts.")
     if not q:
-        st.success("No development gaps were detected from the retained source registry.")
-        return
-    a,b,c,d=st.columns(4)
-    a.metric("Development items",len(q))
-    b.metric("VERIFY",sum(x['state']=='VERIFY' for x in q))
-    c.metric("DEVELOP",sum(x['state']=='DEVELOP' for x in q))
-    d.metric("Incomplete / evidence",sum(x['state'] in {'INCOMPLETE','INSUFFICIENT_EVIDENCE'} for x in q))
-    for i,x in enumerate(q,1):
-        with st.expander(f"DEV_{i:02d} — {x['section']} — {x['state']}", expanded=False):
-            st.write(x['prompt'])
-            if x.get('source_ids'):
-                st.caption("Grounding references: "+", ".join(x['source_ids']))
-            st.info("Investigator action required. This item cannot be approved as a factual ProGen statement in its current state.")
+        st.success("No unresolved development gaps were detected from the current source + investigator-verified evidence registry.")
+    else:
+        a,b,c,d=st.columns(4)
+        a.metric("Unresolved items",len(q))
+        b.metric("VERIFY",sum(x['state']=='VERIFY' for x in q))
+        c.metric("DEVELOP",sum(x['state']=='DEVELOP' for x in q))
+        d.metric("Incomplete / evidence",sum(x['state'] in {'INCOMPLETE','INSUFFICIENT_EVIDENCE'} for x in q))
+        for i,x in enumerate(q,1):
+            dev_id=f"DEV_{i:02d}"
+            with st.expander(f"{dev_id} — {x['section']} — {x['state']}", expanded=False):
+                st.write(x['prompt'])
+                if x.get('source_ids'):
+                    st.caption("Grounding references: "+", ".join(x['source_ids']))
+                st.info("Investigator resolution required. This development prompt itself is not an incident fact.")
+                resolution=st.radio("Resolution",["Pending","Confirmed","Corrected","Unable to Verify","Not Applicable"],horizontal=True,key=f"v93_res_{_v93_section_key(x['section'])}")
+                statement=st.text_area("Investigator-established information",placeholder="Enter only what you have established from the investigation. Do not copy an assumption as a fact.",height=110,key=f"v93_stmt_{_v93_section_key(x['section'])}")
+                evidence_ref=st.text_input("Evidence / reference",placeholder="e.g. CCTV review, witness statement ID, inspection record, medical record, investigator verification note",key=f"v93_ref_{_v93_section_key(x['section'])}")
+                if resolution in {"Unable to Verify","Not Applicable"}:
+                    st.warning("This resolution will not create evidence or unlock factual drafting. The item remains unavailable as a factual source.")
+                if st.button("Accept as Investigation Evidence",key=f"v93_accept_{_v93_section_key(x['section'])}",disabled=resolution not in {"Confirmed","Corrected"}):
+                    ok,msg=_v93_accept_resolution(dev_id,x,resolution,statement,evidence_ref)
+                    if ok:
+                        st.session_state._v93_notice=f"Accepted {msg}."
+                        st.rerun()
+                    else:
+                        st.error(msg)
+    if st.session_state.pop("_v93_notice",None):
+        st.success("Investigator evidence accepted. The development queue and downstream grounding registry have been refreshed.")
+    st.divider()
+    render_v93_verified_evidence()
 
 def render_v8_workspace(review):
-    st.header("V9.2 — Investigation Development Layer")
-    st.info("Develop the investigation from grounded source data, then edit and approve only eligible drafts. V9.2 does not write, save, submit, accept, reject, or move the incident in ProGen.")
+    st.header("V9.3 — Investigator Resolution Workspace")
+    st.info("Resolve investigation gaps into explicitly investigator-verified evidence, then edit and approve only eligible drafts. V9.3 does not write, save, submit, accept, reject, or move the incident in ProGen.")
     items, gemini_count, deterministic_count = v85_merge_draft_candidates(review)
     if not st.session_state.get("payload"):
         st.warning("V9.2 needs the sanitized ProGen source payload to verify evidence grounding. Restoring an old review-only backup is not enough. Paste/upload the original ProGen JSON and click Prepare & Validate; no Gemini call is required.")
@@ -2101,7 +2222,7 @@ def render_v8_workspace(review):
     if eligible_items:
         st.subheader("Investigation Drafts — Edit & Approve")
         st.caption(
-            "Only candidates that passed the V9.2 source-grounding, relevance, protection and VERIFY gates are shown below."
+            "Only candidates that passed the V9.3 source-grounding, relevance, protection and VERIFY gates are shown below."
         )
     else:
         st.info(
