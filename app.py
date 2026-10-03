@@ -20,7 +20,7 @@ def v83_review_backup_controls():
         )
         source_payload=st.session_state.get("payload")
         if source_payload:
-            bundle={"backup_version":"V9.3","review":review,"sanitized_payload":source_payload,"investigator_verified_evidence":st.session_state.get("v93_verified_evidence",[])}
+            bundle={"backup_version":"V9.4","review":review,"sanitized_payload":source_payload,"investigator_verified_evidence":st.session_state.get("v93_verified_evidence",[])}
             st.sidebar.download_button(
                 "Download Review + Source Bundle",
                 data=json.dumps(bundle,ensure_ascii=False,indent=2),
@@ -59,7 +59,7 @@ def v83_review_backup_controls():
     if st.session_state.pop("_v83_restore_notice",False):
         st.sidebar.success("Previous review restored. No Gemini call was made.")
 
-st.set_page_config(page_title="ProGen AI Review V9.3", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="ProGen AI Review V9.4", page_icon="🛡️", layout="wide")
 
 v83_review_backup_controls()
 
@@ -1556,6 +1556,31 @@ def build_v87_source_registry(payload):
             text=_v87_text(data)
             if text:
                 reg[f"{base}_ROW_{i}"]={"kind":"report_row","title":title,"text":text,"data":data}
+
+    # V9.4 deep evidence: detailed Injury Person records read from ProGen dialogs/read-only pages.
+    deep=payload.get("deepEvidence") or {}
+    injury_records=deep.get("injuryRecords") or [] if isinstance(deep,dict) else []
+    for i,rec in enumerate(injury_records,1):
+        if not isinstance(rec,dict):
+            continue
+        # Keep operational/clinical detail; privacy sanitizer redacts direct identifiers before Gemini.
+        text=_v87_text(rec)
+        if text:
+            reg[f"DEEP_INJURY_RECORD_{i}"]={
+                "kind":"deep_injury_record",
+                "title":"Detailed Injury Report",
+                "text":text,
+                "data":rec,
+                "provenance":"PROGEN_INJURY_DIALOG_READONLY"
+            }
+    extraction=deep.get("injuryExtraction") if isinstance(deep,dict) else None
+    if isinstance(extraction,dict):
+        reg["DEEP_INJURY_EXTRACTION_STATUS"]={
+            "kind":"deep_extraction_status",
+            "title":"Injury Deep Extraction Status",
+            "text":_v87_text(extraction),
+            "data":extraction
+        }
     return reg
 
 def _v87_tokens(text):
@@ -2081,12 +2106,62 @@ def _v93_combined_registry(registry):
     return reg
 
 
+def _v94_deep_injury_records(registry):
+    rows=[]
+    for sid,src in (registry or {}).items():
+        if str(sid).startswith("DEEP_INJURY_RECORD_"):
+            rows.append((sid,src))
+    return rows
+
+
+def _v94_injury_reconciliation(registry):
+    """Conservative deterministic comparison of header injury count vs deep records."""
+    expected=None
+    for sid,src in (registry or {}).items():
+        if sid=="FIELD_P9_PEOPLE_INJURED":
+            m=re.search(r"\\d+",str(src.get("text") or ""))
+            if m: expected=int(m.group(0))
+    records=_v94_deep_injury_records(registry)
+    captured=len(records)
+    complete=expected is not None and expected==captured and captured>0
+    return {"expected":expected,"captured":captured,"complete":complete,"source_ids":[sid for sid,_ in records]}
+
+
+def render_v94_deep_evidence_status(registry):
+    rec=_v94_injury_reconciliation(registry)
+    st.subheader("V9.4 Deep Evidence Extraction")
+    c1,c2,c3=st.columns(3)
+    c1.metric("People injured (source field)", rec["expected"] if rec["expected"] is not None else "—")
+    c2.metric("Detailed injury records captured",rec["captured"])
+    c3.metric("Reconciled","YES" if rec["complete"] else "NO")
+    if rec["captured"]:
+        with st.expander("Captured detailed Injury Report records",expanded=False):
+            for sid,src in _v94_deep_injury_records(registry):
+                data=src.get("data") or {}
+                # Do not unnecessarily surface direct person names in the status summary.
+                show={k:v for k,v in data.items() if k not in {"P10_NAME","name","personName"}}
+                st.markdown(f"**{sid}**")
+                st.json(show)
+    if rec["expected"] is not None and not rec["complete"]:
+        st.warning(f'Injury detail remains incomplete: ProGen records {rec["expected"]} injured person(s), while {rec["captured"]} detailed Injury Report record(s) were captured by the deep extractor.')
+    elif rec["complete"]:
+        st.success("The captured detailed Injury Report record count matches P9_PEOPLE_INJURED. Individual content still remains subject to investigator review.")
+
+
 def v92_investigation_development_queue(registry):
     """Build investigator work queue. V9.3 hides a gap after accepted investigator evidence resolves it."""
     q=[]
     human,hids,human_final=_v92_human_consequence(registry)
-    if human and not human_final and not _v93_evidence_for("Consequence / Injury"):
-        q.append({"section":"Consequence / Injury","state":"VERIFY","prompt":"Reconcile the recorded human-injury flag and number of people injured with the detailed Injury Report records. Confirm each affected person, injury description, treatment and final severity/classification.","source_ids":hids})
+    injury_rec=_v94_injury_reconciliation(registry)
+    deep_ids=injury_rec.get("source_ids") or []
+    if human and (not human_final or not injury_rec.get("complete")) and not _v93_evidence_for("Consequence / Injury"):
+        if injury_rec.get("captured"):
+            prompt=(f'Deep extraction captured {injury_rec.get("captured")} detailed Injury Report record(s) against '
+                    f'{injury_rec.get("expected") if injury_rec.get("expected") is not None else "an unspecified number of"} recorded injured person(s). '
+                    'Review the captured records and reconcile each affected person, injury description, treatment and final severity/classification before finalizing the consequence.')
+        else:
+            prompt="Detailed Injury Report records were not captured. Reconcile the recorded human-injury flag and number of people injured with the detailed Injury Report records. Confirm each affected person, injury description, treatment and final severity/classification."
+        q.append({"section":"Consequence / Injury","state":"VERIFY","prompt":prompt,"source_ids":list(dict.fromkeys(hids+deep_ids))})
     if not _v93_evidence_for("Chronology"):
         if not _v92_report_rows(registry,"chronology"):
             q.append({"section":"Chronology","state":"DEVELOP","prompt":"Establish the event sequence from verified evidence. Record only time-stamped events supported by source material; keep unverified vehicle-mechanism statements as VERIFY rather than facts.","source_ids":[]})
@@ -2140,7 +2215,7 @@ def _v93_accept_resolution(dev_id,item,resolution,statement,evidence_ref):
 
 def render_v93_verified_evidence():
     store=_v93_verified_store()
-    st.subheader("V9.3 Investigator-Verified Evidence Registry")
+    st.subheader("V9.4 Investigator-Verified Evidence Registry")
     st.caption("Only information explicitly accepted by the investigator appears here. It is kept separate from original ProGen source data and may be used for downstream grounding.")
     if not store:
         st.info("No investigator-established evidence has been accepted yet.")
@@ -2159,7 +2234,7 @@ def render_v93_verified_evidence():
 
 def render_v92_investigation_development(registry):
     q=v92_investigation_development_queue(registry)
-    st.subheader("V9.3 Investigator Resolution Workspace")
+    st.subheader("V9.4 Investigator Resolution Workspace")
     st.caption("Resolve investigation gaps here. Confirmed/Corrected information is accepted only after you provide the established statement and its evidence/reference. Unable to Verify and Not Applicable close nothing and never become facts.")
     if not q:
         st.success("No unresolved development gaps were detected from the current source + investigator-verified evidence registry.")
@@ -2194,7 +2269,7 @@ def render_v92_investigation_development(registry):
     render_v93_verified_evidence()
 
 def render_v8_workspace(review):
-    st.header("V9.3 — Investigator Resolution Workspace")
+    st.header("V9.4 — Deep Evidence + Investigator Resolution Workspace")
     st.info("Resolve investigation gaps into explicitly investigator-verified evidence, then edit and approve only eligible drafts. V9.3 does not write, save, submit, accept, reject, or move the incident in ProGen.")
     items, gemini_count, deterministic_count = v85_merge_draft_candidates(review)
     if not st.session_state.get("payload"):
@@ -2213,6 +2288,7 @@ def render_v8_workspace(review):
     render_v84_source_data_issues(v84_issues)
 
     v92_registry = build_v87_source_registry(st.session_state.get("payload") or {})
+    render_v94_deep_evidence_status(v92_registry)
     render_v92_investigation_development(v92_registry)
 
     c_ok,c_block=st.columns(2)
@@ -2222,7 +2298,7 @@ def render_v8_workspace(review):
     if eligible_items:
         st.subheader("Investigation Drafts — Edit & Approve")
         st.caption(
-            "Only candidates that passed the V9.3 source-grounding, relevance, protection and VERIFY gates are shown below."
+            "Only candidates that passed the V9.4 source-grounding, relevance, protection and VERIFY gates are shown below."
         )
     else:
         st.info(
@@ -2385,7 +2461,7 @@ def show_review(r):
         st.json(r, expanded=False)
 
 st.title("🛡️ ProGen AI Incident Review — V9.2")
-st.caption("Read → sanitize → Gemini review → human approval. Nothing is written to ProGen.")
+st.caption("Read → deep evidence → sanitize → Gemini review → investigator verification → human approval. Nothing is written to ProGen.")
 
 with st.sidebar:
     st.caption("Models: 3.8 Flash → 3.7 Flash → 3.5 Flash-Lite")
