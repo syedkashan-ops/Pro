@@ -20,7 +20,7 @@ def v83_review_backup_controls():
         )
         source_payload=st.session_state.get("payload")
         if source_payload:
-            bundle={"backup_version":"V9.1","review":review,"sanitized_payload":source_payload}
+            bundle={"backup_version":"V9.2","review":review,"sanitized_payload":source_payload}
             st.sidebar.download_button(
                 "Download Review + Source Bundle",
                 data=json.dumps(bundle,ensure_ascii=False,indent=2),
@@ -58,7 +58,7 @@ def v83_review_backup_controls():
     if st.session_state.pop("_v83_restore_notice",False):
         st.sidebar.success("Previous review restored. No Gemini call was made.")
 
-st.set_page_config(page_title="ProGen AI Review V9.1", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="ProGen AI Review V9.2", page_icon="🛡️", layout="wide")
 
 v83_review_backup_controls()
 
@@ -1719,12 +1719,12 @@ def build_v86_structured_candidates(r):
     _v86_add(items,"Executive Summary","P9_EXECUTIVE_SUMMARY",ex,_v86_pick(ex,("text","executive_summary","summary","narrative")) if isinstance(ex,dict) else ex)
     return items
 
-# ---------------- V9.1 SECTION INTELLIGENCE + RELEVANCE GATE ----------------
-# V9.1 preserves V9.0's source-grounding controls, but does not populate a section
+# ---------------- V9.2 SECTION INTELLIGENCE + RELEVANCE GATE ----------------
+# V9.2 preserves V9.0's source-grounding controls, but does not populate a section
 # merely because ProGen exposes a field for it.
 V90_FACTUAL_SECTIONS={"Chronology","Causes","Why Why Analysis Tree"}
 
-V91_EXEC_GUIDELINE = {
+V92_EXEC_GUIDELINE = {
     "purpose": "Concise narrative for senior management, written last from verified investigation facts.",
     "include": [
         "What happened and where",
@@ -1742,20 +1742,20 @@ def _v90_fact_pack(registry):
     finding,ids,facts=_v89_professional_finding(registry)
     return {"finding":finding,"source_ids":ids,"facts":facts}
 
-def _v91_report_rows(registry, needle):
+def _v92_report_rows(registry, needle):
     out=[]
     for sid,r in (registry or {}).items():
         if r.get("kind")=="report_row" and needle.lower() in str(r.get("title","")).lower():
             out.append((sid,r.get("data") or {}))
     return out
 
-def _v91_field_value(registry, field_id):
+def _v92_field_value(registry, field_id):
     v,sid=_v881_field(registry,field_id)
     return v.strip(),sid
 
-def _v91_human_consequence(registry):
-    human,hid=_v91_field_value(registry,"P9_IS_HUMAN")
-    count,cid=_v91_field_value(registry,"P9_PEOPLE_INJURED")
+def _v92_human_consequence(registry):
+    human,hid=_v92_field_value(registry,"P9_IS_HUMAN")
+    count,cid=_v92_field_value(registry,"P9_PEOPLE_INJURED")
     ids=[x for x in (hid,cid) if x]
     if human.upper() in {"YES","Y","TRUE","1"} or (count and count not in {"0","0.0"}):
         if count:
@@ -1765,8 +1765,8 @@ def _v91_human_consequence(registry):
         return "The source record states that no human injury/illness consequence was recorded.",ids,True
     return "",ids,False
 
-def _v91_root_cause(registry):
-    rows=_v91_report_rows(registry,"root cause")
+def _v92_root_cause(registry):
+    rows=_v92_report_rows(registry,"root cause")
     if not rows:return "",[]
     vals=[]; ids=[]
     for sid,row in rows:
@@ -1775,8 +1775,8 @@ def _v91_root_cause(registry):
             vals.append(text); ids.append(sid)
     return ("; ".join(vals),ids) if vals else ("",[])
 
-def _v91_actions(registry):
-    rows=_v91_report_rows(registry,"action")
+def _v92_actions(registry):
+    rows=_v92_report_rows(registry,"action")
     vals=[]; ids=[]
     for sid,row in rows:
         text=_v881_lookup(row,"Actions and Recommendations","Action","Corrective Action","Recommendation")
@@ -1785,7 +1785,7 @@ def _v91_actions(registry):
             vals.append(text + (f" (status: {status})" if status else "")); ids.append(sid)
     return vals,ids
 
-def _v91_response(registry):
+def _v92_response(registry):
     # Only use explicit response/containment source fields/rows; never infer isolation,
     # first aid, emergency response, notifications, etc. from the consequence itself.
     vals=[]; ids=[]
@@ -1796,14 +1796,14 @@ def _v91_response(registry):
             if text: vals.append(text); ids.append(sid)
     return vals,ids
 
-def _v91_executive_summary(registry):
+def _v92_executive_summary(registry):
     """Build management summary only from retained source facts and expose incompleteness."""
     pack=_v90_fact_pack(registry)
     if not pack["source_ids"]: return "",[],[],[]
     paragraphs=[]; ids=list(pack["source_ids"]); facts=list(pack["facts"]); missing=[]
     paragraphs.append(pack["finding"])
 
-    human,hids,human_final=_v91_human_consequence(registry)
+    human,hids,human_final=_v92_human_consequence(registry)
     if human:
         paragraphs.append(human); ids.extend(hids)
         facts.append({"text":human,"source_ids":hids,"support_score":1.0})
@@ -1811,19 +1811,19 @@ def _v91_executive_summary(registry):
     else:
         missing.append("Human consequence / affected-person outcome is not established in retained source data.")
 
-    response,rids=_v91_response(registry)
+    response,rids=_v92_response(registry)
     if response:
         t="Recorded immediate response/containment: "+"; ".join(response)+"."
         paragraphs.append(t); ids.extend(rids); facts.append({"text":t,"source_ids":rids,"support_score":1.0})
     else: missing.append("Immediate response and containment are not established in retained source data.")
 
-    root,rootids=_v91_root_cause(registry)
+    root,rootids=_v92_root_cause(registry)
     if root:
         t="The recorded root cause is: "+root.rstrip(".")+"."
         paragraphs.append(t); ids.extend(rootids); facts.append({"text":t,"source_ids":rootids,"support_score":1.0})
     else: missing.append("Root cause is not established in retained source data.")
 
-    actions,aids=_v91_actions(registry)
+    actions,aids=_v92_actions(registry)
     if actions:
         t="Recorded actions/recommendations include: "+"; ".join(actions)+"."
         paragraphs.append(t); ids.extend(aids); facts.append({"text":t,"source_ids":aids,"support_score":1.0})
@@ -1834,12 +1834,12 @@ def _v91_executive_summary(registry):
     text="\n\n".join(p for p in paragraphs if p).strip()
     return text,list(dict.fromkeys(ids)),facts,missing
 
-def _v91_summary_statement(registry):
+def _v92_summary_statement(registry):
     """Concise consequence/outcome statement; deliberately distinct from Executive Summary."""
     pack=_v90_fact_pack(registry)
     if not pack["source_ids"]:return "",[],[]
     text=pack["finding"]
-    human,hids,_=_v91_human_consequence(registry)
+    human,hids,_=_v92_human_consequence(registry)
     if human: text += " " + human
     return text,list(dict.fromkeys(pack["source_ids"]+hids)),pack["facts"] + ([{"text":human,"source_ids":hids,"support_score":1.0}] if human else [])
 
@@ -1854,14 +1854,14 @@ def _v90_ground_factual_item(item,registry):
     x["claim_grounding"]=claims
     if not claims or bad:
         x["guard_blocked"]=True
-        x["guard_reason"]="V9.1 factual-section gate: one or more factual claims are not sufficiently grounded in retained ProGen source data."
+        x["guard_reason"]="V9.2 factual-section gate: one or more factual claims are not sufficiently grounded in retained ProGen source data."
         x["v90_policy"]="FACTUAL_STRICT"
     else:
         x["source_ids"]=list(dict.fromkeys(sid for c in claims for sid in c["source_ids"]))
         x["v90_policy"]="FACTUAL_STRICT"
     return x
 
-def _v91_lesson_relevance(target,registry):
+def _v92_lesson_relevance(target,registry):
     """Return (relevant, reason). A lesson needs section-specific evidence, not just an incident consequence."""
     t=target.lower()
     titles=" ".join(str(r.get("title","")).lower() for r in (registry or {}).values())
@@ -1882,8 +1882,8 @@ def _v91_lesson_relevance(target,registry):
     ok=any(k in corpus for k in keys)
     return ok, ("Relevant source category is present." if ok else "Insufficient grounded, section-specific evidence for this lesson category.")
 
-def _v91_lesson_draft(target,registry):
-    relevant,reason=_v91_lesson_relevance(target,registry)
+def _v92_lesson_draft(target,registry):
+    relevant,reason=_v92_lesson_relevance(target,registry)
     if not relevant:return "",[],[],reason
     # Even when relevant, use a neutral draft tied to the identified category and require investigator editing.
     pack=_v90_fact_pack(registry)
@@ -1908,69 +1908,69 @@ def v90_apply_investigation_builder(items,registry):
         x=dict(raw); section=str(x.get("section") or ""); target=str(x.get("target") or "")
         if section=="Finding Summary": out.append(x); continue
         if section=="Executive Summary":
-            text,ids,facts,missing=_v91_executive_summary(registry)
+            text,ids,facts,missing=_v92_executive_summary(registry)
             if text and ids:
                 old=str(x.get("proposed_value",x.get("value","")) or "")
                 x.update({"proposed_value":text,"value":text,"source_ids":ids,
                     "claim_grounding":[{"claim":f["text"],"source_ids":f["source_ids"],"support_score":1.0,"grounded":True} for f in facts],
-                    "guard_blocked":False,"guard_reason":"","v90_source_first":True,"v91_executive":True,
-                    "v91_missing_components":missing,"v90_original_ai_value":old,"plan_origin":"V91_EXECUTIVE_GUIDELINE"})
+                    "guard_blocked":False,"guard_reason":"","v90_source_first":True,"v92_executive":True,
+                    "v92_missing_components":missing,"v90_original_ai_value":old,"plan_origin":"V92_EXECUTIVE_GUIDELINE"})
             out.append(x); continue
         if section=="Causes" and target=="Summary Statement":
-            text,ids,facts=_v91_summary_statement(registry)
+            text,ids,facts=_v92_summary_statement(registry)
             if text and ids:
                 old=str(x.get("proposed_value",x.get("value","")) or "")
                 x.update({"proposed_value":text,"value":text,"source_ids":ids,
                     "claim_grounding":[{"claim":f["text"],"source_ids":f["source_ids"],"support_score":1.0,"grounded":True} for f in facts],
-                    "guard_blocked":False,"guard_reason":"","v90_source_first":True,"v91_summary_statement":True,
-                    "v90_original_ai_value":old,"plan_origin":"V91_SOURCE_FIRST_SUMMARY_STATEMENT"})
+                    "guard_blocked":False,"guard_reason":"","v90_source_first":True,"v92_summary_statement":True,
+                    "v90_original_ai_value":old,"plan_origin":"V92_SOURCE_FIRST_SUMMARY_STATEMENT"})
             out.append(x); continue
         if section in V90_FACTUAL_SECTIONS:
             out.append(_v90_ground_factual_item(x,registry)); continue
         if section=="Lesson Learned":
-            text,ids,facts,reason=_v91_lesson_draft(target,registry)
+            text,ids,facts,reason=_v92_lesson_draft(target,registry)
             if text and ids:
                 x.update({"proposed_value":text,"value":text,"source_ids":ids,"status":"DRAFT",
                     "claim_grounding":[{"claim":text,"source_ids":ids,"support_score":1.0,"grounded":True,"nature":"DRAFT_LESSON"}],
-                    "guard_blocked":False,"guard_reason":"","v90_recommendation":True,"v91_relevant":True,
-                    "v91_relevance_reason":reason,"plan_origin":"V91_RELEVANT_LESSON_DRAFT"})
+                    "guard_blocked":False,"guard_reason":"","v90_recommendation":True,"v92_relevant":True,
+                    "v92_relevance_reason":reason,"plan_origin":"V92_RELEVANT_LESSON_DRAFT"})
             else:
-                x.update({"guard_blocked":True,"status":"NOT_APPLICABLE","v91_not_generated":True,
-                    "v91_relevance_reason":reason,"guard_reason":"V9.1 relevance gate: "+reason,
-                    "proposed_value":"","value":"","plan_origin":"V91_RELEVANCE_GATE"})
+                x.update({"guard_blocked":True,"status":"INSUFFICIENT_EVIDENCE","v92_not_generated":True,
+                    "v92_relevance_reason":reason,"guard_reason":"V9.2 relevance gate: "+reason,
+                    "proposed_value":"","value":"","plan_origin":"V92_RELEVANCE_GATE"})
             out.append(x); continue
         if section=="Actions and Recommendations":
             text,ids,facts=_v90_action_draft(registry)
             if text and ids:
                 x.update({"proposed_value":text,"value":text,"source_ids":ids,"status":"DRAFT",
                     "claim_grounding":[{"claim":text,"source_ids":ids,"support_score":1.0,"grounded":True,"nature":"DRAFT_RECOMMENDATION"}],
-                    "guard_blocked":False,"guard_reason":"","v90_recommendation":True,"plan_origin":"V91_GROUNDED_ACTION_DRAFT"})
+                    "guard_blocked":False,"guard_reason":"","v90_recommendation":True,"plan_origin":"V92_GROUNDED_ACTION_DRAFT"})
             out.append(x); continue
         out.append(x)
     return out
 
 def render_v90_builder(item):
-    if item.get("v91_not_generated"):
-        st.warning("V9.1: Not generated — insufficient grounded basis for this ProGen section.")
-        st.caption(item.get("v91_relevance_reason", "")); return
-    if item.get("v91_executive"):
-        st.success("V9.1 Executive Summary follows the ProGen management-summary guideline and uses only retained grounded facts.")
+    if item.get("v92_not_generated"):
+        st.warning("V9.2: Investigation development required — insufficient evidence to finalize this ProGen section.")
+        st.caption(item.get("v92_relevance_reason", "")); return
+    if item.get("v92_executive"):
+        st.success("V9.2 Executive Summary follows the ProGen management-summary guideline and uses only retained grounded facts.")
         st.caption("ProGen guideline: what happened/where; affected persons/severity; what went wrong; response/containment; root cause; actions; systemic implication. Target 250–400 words when the completed investigation supports those elements.")
-        missing=item.get("v91_missing_components") or []
+        missing=item.get("v92_missing_components") or []
         if missing:
             with st.expander("Executive Summary — information still required before finalization", expanded=False):
                 for m in missing: st.markdown("- "+m)
-    elif item.get("v91_summary_statement"):
-        st.success("V9.1 built a concise source-grounded Summary Statement. It is intentionally different from the management-level Executive Summary.")
+    elif item.get("v92_summary_statement"):
+        st.success("V9.2 built a concise source-grounded Summary Statement. It is intentionally different from the management-level Executive Summary.")
     elif item.get("v90_source_first"):
-        st.success("V9.1 rebuilt this section directly from grounded ProGen facts; Gemini narrative was not reused.")
+        st.success("V9.2 rebuilt this section directly from grounded ProGen facts; Gemini narrative was not reused.")
     elif item.get("v90_recommendation"):
-        st.info("V9.1 generated this as a DRAFT only where the section passed the relevance gate. It is not presented as an established incident fact.")
+        st.info("V9.2 generated this as a DRAFT only where the section passed the relevance gate. It is not presented as an established incident fact.")
     elif item.get("v90_policy")=="FACTUAL_STRICT":
         if item.get("guard_blocked"):
-            st.warning("V9.1 factual-section gate: this entry remains blocked until its factual claims are grounded in retained ProGen source data.")
+            st.warning("V9.2 factual-section gate: this entry remains blocked until its factual claims are grounded in retained ProGen source data.")
         else:
-            st.success("V9.1 factual-section gate: all claims in this entry are source-grounded.")
+            st.success("V9.2 factual-section gate: all claims in this entry are source-grounded.")
 
 # ---------------- V9.0 MERGE + DEDUPLICATION ----------------
 def _v85_fingerprint(item):
@@ -2027,12 +2027,57 @@ def v85_split_after_gate(items):
             eligible.append(item)
     return eligible,blocked,issues
 
+
+def v92_investigation_development_queue(registry):
+    """Build a non-factual investigator work queue. These are prompts/checks, never incident facts."""
+    q=[]
+    human,hids,human_final=_v92_human_consequence(registry)
+    if human and not human_final:
+        q.append({"section":"Consequence / Injury","state":"VERIFY","prompt":"Reconcile the recorded human-injury flag and number of people injured with the detailed Injury Report records. Confirm each affected person, injury description, treatment and final severity/classification.","source_ids":hids})
+    if not _v92_report_rows(registry,"chronology"):
+        q.append({"section":"Chronology","state":"DEVELOP","prompt":"Establish the event sequence from verified evidence. Record only time-stamped events supported by source material; keep unverified vehicle-mechanism statements as VERIFY rather than facts.","source_ids":[]})
+    else:
+        q.append({"section":"Chronology","state":"VERIFY","prompt":"Review chronology entries and separate observed/verified events from reported or assumed mechanism details before using them in findings or causes.","source_ids":[sid for sid,_ in _v92_report_rows(registry,"chronology")]})
+    if not _v92_root_cause(registry)[0]:
+        q.append({"section":"Causes / Why-Why","state":"DEVELOP","prompt":"Develop immediate and root causes only after the chronology and findings are verified. Use Why-Why to test causal links; do not convert tyre failure, speed, driver behaviour or similar hypotheses into facts without evidence.","source_ids":[]})
+    if not _v92_response(registry)[0]:
+        q.append({"section":"Immediate Response","state":"DEVELOP","prompt":"Confirm and document the actual immediate response and containment: what was made safe, by whom, when, and what operational restriction was applied. Do not infer actions from the damage outcome.","source_ids":[]})
+    if not _v92_actions(registry)[0]:
+        q.append({"section":"Actions & Recommendations","state":"DEVELOP","prompt":"After causes are established, define corrective/preventive actions linked to those causes, with responsibility and deadline supplied by the investigator. Keep proposed actions as DRAFT until approved.","source_ids":[]})
+    # Lessons are downstream of verified findings/causes.
+    lesson_ready=bool(_v92_root_cause(registry)[0])
+    if not lesson_ready:
+        q.append({"section":"Lesson Learned","state":"INSUFFICIENT_EVIDENCE","prompt":"Do not finalize lesson categories yet. Reassess them after verified findings and causes are established; generate only categories actually demonstrated by the investigation.","source_ids":[]})
+    ex_text,ex_ids,_,missing=_v92_executive_summary(registry)
+    if missing:
+        q.append({"section":"Executive Summary","state":"INCOMPLETE","prompt":"Finalize last, after the investigation establishes the missing management-summary elements: "+" ".join(missing),"source_ids":ex_ids})
+    return q
+
+def render_v92_investigation_development(registry):
+    q=v92_investigation_development_queue(registry)
+    st.subheader("V9.2 Investigation Development")
+    st.caption("This queue helps develop the investigation. Items below are questions/checks for the investigator — not established incident facts and not ProGen write candidates.")
+    if not q:
+        st.success("No development gaps were detected from the retained source registry.")
+        return
+    a,b,c,d=st.columns(4)
+    a.metric("Development items",len(q))
+    b.metric("VERIFY",sum(x['state']=='VERIFY' for x in q))
+    c.metric("DEVELOP",sum(x['state']=='DEVELOP' for x in q))
+    d.metric("Incomplete / evidence",sum(x['state'] in {'INCOMPLETE','INSUFFICIENT_EVIDENCE'} for x in q))
+    for i,x in enumerate(q,1):
+        with st.expander(f"DEV_{i:02d} — {x['section']} — {x['state']}", expanded=False):
+            st.write(x['prompt'])
+            if x.get('source_ids'):
+                st.caption("Grounding references: "+", ".join(x['source_ids']))
+            st.info("Investigator action required. This item cannot be approved as a factual ProGen statement in its current state.")
+
 def render_v8_workspace(review):
-    st.header("V9.1 — Section Intelligence & Relevance Gate")
-    st.info("Edit each proposed value and approve or reject it. V8 does not write, save, submit, accept, reject, or move the incident in ProGen.")
+    st.header("V9.2 — Investigation Development Layer")
+    st.info("Develop the investigation from grounded source data, then edit and approve only eligible drafts. V9.2 does not write, save, submit, accept, reject, or move the incident in ProGen.")
     items, gemini_count, deterministic_count = v85_merge_draft_candidates(review)
     if not st.session_state.get("payload"):
-        st.warning("V9.1 needs the sanitized ProGen source payload to verify evidence grounding. Restoring an old review-only backup is not enough. Paste/upload the original ProGen JSON and click Prepare & Validate; no Gemini call is required.")
+        st.warning("V9.2 needs the sanitized ProGen source payload to verify evidence grounding. Restoring an old review-only backup is not enough. Paste/upload the original ProGen JSON and click Prepare & Validate; no Gemini call is required.")
     st.caption(
         f"Draft sources merged: Gemini write plan ({gemini_count}) + "
         f"structured AI review candidates ({deterministic_count})"
@@ -2046,6 +2091,9 @@ def render_v8_workspace(review):
     # Blocked/source/reporting items appear only here, not again in the approval queue.
     render_v84_source_data_issues(v84_issues)
 
+    v92_registry = build_v87_source_registry(st.session_state.get("payload") or {})
+    render_v92_investigation_development(v92_registry)
+
     c_ok,c_block=st.columns(2)
     c_ok.metric("Eligible for approval",len(eligible_items))
     c_block.metric("Protected / Verify / Blocked",len(blocked_items))
@@ -2053,7 +2101,7 @@ def render_v8_workspace(review):
     if eligible_items:
         st.subheader("Investigation Drafts — Edit & Approve")
         st.caption(
-            "Only candidates that passed the V9.1 source-grounding, relevance, protection and VERIFY gates are shown below."
+            "Only candidates that passed the V9.2 source-grounding, relevance, protection and VERIFY gates are shown below."
         )
     else:
         st.info(
@@ -2190,7 +2238,7 @@ def show_review(r):
         show_evidence_guard(r)
 
     with tabs[8]:
-        st.warning("V9.1 never writes or submits to ProGen. Final Save/Submit remains manual.")
+        st.warning("V9.2 never writes or submits to ProGen. Final Save/Submit remains manual.")
         guard = r.get("evidence_guard") or {}
         if guard.get("approval_gate") == "REVIEW REQUIRED":
             st.error("Evidence Guard requires review. Guard-blocked write-plan items must not be approved until verified.")
@@ -2215,7 +2263,7 @@ def show_review(r):
     with tabs[9]:
         st.json(r, expanded=False)
 
-st.title("🛡️ ProGen AI Incident Review — V9.1")
+st.title("🛡️ ProGen AI Incident Review — V9.2")
 st.caption("Read → sanitize → Gemini review → human approval. Nothing is written to ProGen.")
 
 with st.sidebar:
